@@ -2560,6 +2560,7 @@ class CutAndPaste(DualTransform):
         vflip: bool = True,
         obj_min_visibility: float = 0.1,
         obj_min_area: int = 0,
+        color_order="RGB",  # "RGB" or "BGR"
         always_apply=False,
         p=0.5,
     ):
@@ -2578,6 +2579,7 @@ class CutAndPaste(DualTransform):
         if self.blend_method not in F.BLEND_METHODS:
             raise ValueError(f"blend_method should be one of {F.BLEND_METHODS}, but got {blend_method}")
 
+        self.color_order = color_order
         self.sigma = sigma
         self.num_object_limit = to_tuple(num_object_limit)
         self.scale_limit = to_tuple(scale_limit)
@@ -2721,7 +2723,8 @@ class CutAndPaste(DualTransform):
         img = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
         if img.shape[2] != 4:
             raise ValueError(f"RGBA image is expected, but the {image_path} has the shape: {img.shape}")
-        img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
+        if self.color_order == "RGB":
+            img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
         label = self.get_label_from_path(image_path)
         mask = np.where(img[:, :, 3] > 0, 1, 0).astype(np.uint8)[:, :, None]
         img = img[:, :, :3]
