@@ -50,6 +50,7 @@ __all__ = [
     "multiply",
     "noop",
     "normalize",
+    "paste",
     "posterize",
     "shift_hsv",
     "shift_rgb",
@@ -197,6 +198,86 @@ def solarize(img, threshold=128):
     cond = img >= threshold
     result_img[cond] = max_val - result_img[cond]
     return result_img
+
+
+BLEND_METHODS = ("GAUSSIAN", "NORMAL_CLONE", "MIXED_CLONE", "MONOCHROME_TRANSFER")
+CV2_BLEND_METHOD_MAP = {
+    "NORMAL_CLONE": cv2.NORMAL_CLONE,
+    "MIXED_CLONE": cv2.MIXED_CLONE,
+    "MONOCHROME_TRANSFER": cv2.MONOCHROME_TRANSFER,
+}
+
+
+def paste(
+    base_img: np.ndarray,
+    obj_img: np.ndarray,
+    obj_mask: np.ndarray,
+    obj_top: int,
+    obj_left: int,
+    sigma: float = 1,
+    blend_method: str = "GAUSSIAN",
+):
+    """
+    Args:
+        base_img (numpy.ndarray): An image where another object will be pasted onto it.
+        obj_img (numpy.ndarray): An image to be pasted onto the base_img.
+        obj_mask (numpy.ndarray): An mask cover the pasted object. The height and with should be the same
+                                  as the obj_img's ones.
+        obj_top (int): The y position of the top of the obj_img in the base_img coordinate.
+        obj_left (int): The x position of the left of the obj_img in the base_img cooridate.
+        sigma (float): Standard deviation for Gaussian kernel used in the "GAUSSIAN" blending method.
+        blend_method (str): keyword to select a blending method. Should be one of:
+                            ["GAUSSIAN", "NORMAL_CLONE", "MIXED_CLONE", "MONOCHROME_TRANSFER"].
+                            Lower cases will be capitalized. Default is "GAUSSIAN".
+    Returns:
+        numpy.ndarray: Blended image.
+
+    Reference:
+        Golnaz Ghiasi, Yin Cui, Aravind Srinivas, Rui Qian, Tsung-Yi Lin, Ekin D. Cubuk, Quoc V. Le, Barret Zoph:
+        "Simple Copy-Paste is a Strong Data Augmentation Method for Instance Segmentation"
+        Patrick Perez, Michel Gangnet, Andrew Blake: "Poisson Image Editing"
+    """
+    blend_method = blend_method.upper()
+
+    if blend_method not in BLEND_METHODS:
+        raise ValueError(f"blend_method should be one of {BLEND_METHODS}, but got {blend_method}")
+
+    h, w = base_img.shape[:2]
+    obj_h, obj_w = obj_img.shape[:2]
+
+    if h < obj_top + obj_h:
+        raise ValueError(
+            f"obj_img height(={obj_h}) + obj_top(={obj_top}) should be less than or equal to base_img height(={h})"
+            + f", got {obj_h + obj_top} > {h}"
+        )
+
+    if w < obj_left + obj_w:
+        raise ValueError(
+            f"obj_img width(={obj_w}) + obj_left(={obj_left}) should be less than or equal to base_img width(={w})"
+            + f", got {obj_w + obj_left} > {w}"
+        )
+
+    if blend_method in CV2_BLEND_METHOD_MAP:
+        # poisson blending
+        obj_mask = np.where(obj_mask > 0, 255, 0).astype(np.uint8)
+        # calc object center position
+        obj_cent = (int(obj_left + obj_w / 2), int(obj_top + obj_h / 2))
+        blend_img = cv2.seamlessClone(obj_img, base_img, obj_mask, p=obj_cent, flags=CV2_BLEND_METHOD_MAP[blend_method])
+    else:
+        # gaussian blending
+        alpha = np.where(obj_mask > 0, 1.0, 0.0).astype(np.float32)
+        alpha = skimage.filters.gaussian(alpha, sigma=sigma, preserve_range=True)
+        alpha = alpha[:, :, None]
+
+        idx_row = slice(obj_top, obj_top + obj_h)
+        idx_col = slice(obj_left, obj_left + obj_w)
+
+        blend_img = base_img.copy()
+        img_dtype = base_img.dtype
+
+        blend_img[idx_row, idx_col] = obj_img * alpha + blend_img[idx_row, idx_col] * (1 - alpha)
+        blend_img = blend_img.astype(img_dtype)
+    return blend_img
 
 
 @preserve_shape
